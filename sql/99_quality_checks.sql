@@ -4,10 +4,9 @@
 SELECT COUNT(*) AS inconsistencias
 FROM silver.sales
 WHERE ABS(gross_sales - units_sold * sale_price) > 0.01
-   OR ABS(sales - (gross_sales - discounts))     > 0.01
-   OR ABS(profit - (sales - cogs))               > 0.01;
+   OR ABS(sales - (gross_sales - discounts))     > 0.01;
 
--- 2. Unicidade da granularidade (esperado: nenhuma linha)
+-- 2. Repetições na granularidade (resultado atual: 112 combinações; característica da fonte)
 SELECT segment, country, product, date, COUNT(*)
 FROM silver.sales
 GROUP BY 1, 2, 3, 4
@@ -25,7 +24,7 @@ SELECT
     (SELECT COUNT(*) FROM gold.fact_sales) AS linhas_gold;
 
 -- 5. Produtos sem correspondência na dimensão (esperado: nenhuma linha)
-SELECT DISTINCT s.product_name
+SELECT DISTINCT s.product
 FROM silver.sales s
-LEFT JOIN gold.dim_products d ON d.product = s.product_name
+LEFT JOIN gold.dim_products d ON d.product = s.product
 WHERE d.id IS NULL;

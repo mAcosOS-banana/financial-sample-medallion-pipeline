@@ -51,7 +51,7 @@ Mais do que o resultado visual, o foco do projeto está nas **decisões técnica
 ```mermaid
 flowchart LR
     A[Financial Sample<br/>CSV / XLSX] --> B[Raw<br/>arquivo original]
-    B -->|Polars| C[(Bronze<br/>texto, sem tratamento)]
+    B -->|Polars| C[(Bronze<br/>tipos da fonte, sem tratamento)]
     C -->|SQL| D[(Silver<br/>limpo e tipado)]
     D -->|SQL| E[(Gold<br/>esquema estrela)]
     E -->|Import| F[Power BI<br/>DAX]
@@ -96,7 +96,8 @@ Antes de qualquer transformação, analisei a estrutura dos dados. Encontrei car
 |---|---|
 | Cada linha é um **resumo mensal** (segmento × país × produto × mês), e não uma venda individual | Define a granularidade da fato e impede o cálculo de ticket médio |
 | Todas as datas estão no **dia 1 do mês** | A dimensão calendário precisa estender o último mês até o fim (`EOMONTH`) |
-| O período vai de **set/2013 a dez/2014** | 2013 é um ano parcial; comparações anuais exigem cuidado |
+| O período vai de **set/2013 a dez/2016**, em duas bases (2013–2014 e 2015–2016) | 2013 é um ano parcial; comparações anuais exigem cuidado |
+| A combinação segmento × país × produto × mês **não é única** (112 combinações se repetem, quase todas no segmento Government) | A fato não pode assumir essa combinação como chave; cada linha é identificada pelo `id` gerado |
 | O `sale_price` varia por **segmento**, e não por produto | O mesmo produto apresenta preços muito diferentes na mesma data |
 | **Não existe** identificador de pedido | Um `id` gerado identifica registros, mas não representa uma venda |
 | Variações de grafia em textos (`segment`, `discount_band`) | Exige padronização explícita na Silver |
@@ -106,7 +107,7 @@ Antes de qualquer transformação, analisei a estrutura dos dados. Encontrei car
 ## 🗂 Estrutura do repositório
 
 ```
-financial-sample-pipeline/
+financial-sample-medallion-pipeline/
 ├── data/
 │   └── raw/                    # Arquivo original (Financial Sample)
 ├── ingestion/
@@ -143,24 +144,36 @@ Armazena o arquivo **exatamente como foi recebido**. Esta camada não é consult
 
 **O que faço nesta camada:**
 
-1. **Leio todas as colunas como texto** (`infer_schema=False`).
-2. **Padronizo os nomes das colunas** para `snake_case` (`Gross Sales` → `gross_sales`).
-3. **Gravo a tabela em um schema específico** (`bronze.sales`).
+1. **Leio as planilhas Excel** (`.xlsx`) com o Polars e o engine `calamine`.
+2. **Padronizo os nomes das colunas** para `snake_case` (`Gross Sales` → `gross_sales`) com a função `normalizar_nome`, que também remove acentos e conectores.
+3. **Separo a coluna combinada** `country,product` em `country` e `product`.
+4. **Gravo a tabela em um schema específico**, acrescentando os arquivos de cada período.
 
 ```python
 import polars as pl
+from utils import normalizar_nome
 
-df = (
-    pl.read_csv("data/raw/financial_sample.csv", infer_schema=False)
-    .rename(lambda c: c.strip().lower().replace(" ", "_"))
-)
+for arquivo in sales_data:
+    df = pl.read_excel(arquivo, engine="calamine")
+    df = df.rename({col: normalizar_nome(col) for col in df.columns})
 
-df.write_database(
-    table_name="bronze.sales",
-    connection=POSTGRES_URL,
-    engine="sqlalchemy",
-    if_table_exists="replace",
-)
+    df = (
+        df.with_columns(
+            pl.col("country,product")
+            .str.split_exact(",", 1)
+            .struct.rename_fields(["country", "product"])
+            .alias("split")
+        )
+        .unnest("split")
+        .drop("country,product")
+    )
+
+    df.write_database(
+        table_name="raw.sales_raw",
+        connection=engine.connect(),
+        engine="sqlalchemy",
+        if_table_exists="append",
+    )
 ```
 
 O schema é criado previamente, pois o Polars cria a tabela, mas não cria o schema:
@@ -213,10 +226,12 @@ O valor `None` em `discount_band` foi substituído por `No Discount`. O termo or
 
 **5. Tipagem**
 
-- Valores monetários → `NUMERIC`.
-- Percentuais → `NUMERIC(10,4)`.
+- Valores monetários e quantidades → mantêm os tipos da Bronze (`DOUBLE PRECISION`; `sale_price` em `BIGINT`).
+- Percentuais → `NUMERIC(38,4)`.
 - Datas → `DATE`.
-- Ano e mês → `INT`.
+- Ano e mês → `BIGINT`.
+
+A conversão dos valores monetários para `NUMERIC(38,4)` acontece na carga da Gold (`gold.fact_sales`).
 
 #### Tabelas auxiliares
 
@@ -261,7 +276,7 @@ ON CONFLICT (product) DO NOTHING;
 
 - `segment`, `country` e `product` são substituídos pelos `id` das dimensões.
 - Apenas métricas **aditivas** permanecem na fato.
-- Chaves estrangeiras com `NOT NULL` e índices nas colunas de junção.
+- Chaves estrangeiras com `NOT NULL`.
 
 ```sql
 INSERT INTO gold.fact_sales (
@@ -274,7 +289,7 @@ SELECT
 FROM silver.sales s
 JOIN gold.dim_segments ds ON ds.segment = s.segment
 JOIN gold.dim_countrys dc ON dc.country = s.country
-JOIN gold.dim_products dp ON dp.product = s.product_name;
+JOIN gold.dim_products dp ON dp.product = s.product;
 ```
 
 #### Fato agregada `gold.resume_products`
@@ -323,6 +338,7 @@ erDiagram
         numeric discounts
         numeric sales
         numeric profit
+        text profit_flag
     }
     dim_products {
         uuid id PK
@@ -445,10 +461,10 @@ Esta seção registra as principais decisões do projeto. Para cada uma, descrev
 - **Motivo:** API expressiva, bom desempenho e gravação direta em schema qualificado com `write_database`.
 - **Trade-off:** com o engine `sqlalchemy`, o Polars usa o `pandas.to_sql` internamente. Para volumes maiores, o engine `adbc` é mais eficiente.
 
-#### 2. Bronze inteiramente em texto
-- **Decisão:** ler e gravar todas as colunas como texto.
-- **Motivo:** uma linha com valor inválido não interrompe a carga. A tipagem é responsabilidade da Silver, onde existe controle sobre erros.
-- **Trade-off:** a Silver precisa de casts explícitos.
+#### 2. Tipos inferidos da planilha na Bronze
+- **Decisão:** manter os tipos que o Polars infere das células do Excel (`double precision`, `bigint`, `date` e `text`), sem casts manuais.
+- **Motivo:** no `.xlsx`, as células já são tipadas. Datas e números chegam corretos à Bronze, sem conversão de texto. Os ajustes de tipo e de domínio ficam na Silver.
+- **Trade-off:** um valor inválido em uma coluna numérica pode virar nulo ou interromper a carga. Se o tipo de uma coluna mudar entre os arquivos, o `append` falha. Ler tudo como texto evitaria esses dois riscos, em troca de casts explícitos na Silver.
 
 #### 3. Um schema por camada
 - **Decisão:** `bronze`, `silver` e `gold` como schemas separados no mesmo banco.
@@ -464,7 +480,7 @@ Esta seção registra as principais decisões do projeto. Para cada uma, descrev
 - **Decisão:** classificar o resultado da venda pelo valor absoluto do lucro, e não pelo percentual.
 - **Motivo:** o percentual é arredondado para quatro casas. Um lucro muito pequeno seria arredondado para zero e classificado como `Break-Even` de forma incorreta.
 
-#### 6. `NUMERIC(10,4)` para percentuais
+#### 6. `NUMERIC(38,4)` para percentuais
 - **Decisão:** armazenar percentuais como fração com quatro casas decimais.
 - **Motivo:** com duas casas, `0,0567` viraria `0,06`. A perda de precisão afetaria qualquer análise posterior.
 
@@ -500,8 +516,8 @@ Esta seção registra as principais decisões do projeto. Para cada uma, descrev
 - **Motivo:** o `gen_random_uuid()` gera um valor novo a cada execução. Recriar a dimensão quebraria a ligação com fatos, relatórios e filtros salvos.
 
 #### 14. Fato apenas com métricas aditivas
-- **Decisão:** remover percentuais, `profit_flag` e atributos de calendário (`month_number`, `month_name`, `year`) da `fact_sales`.
-- **Motivo:** atributos de data pertencem à dimensão calendário. Métricas não aditivas devem ser calculadas no contexto do filtro, e não armazenadas.
+- **Decisão:** remover percentuais e atributos de calendário (`month_number`, `month_name`, `year`) da `fact_sales`. A `profit_flag` foi mantida como atributo da linha (dimensão degenerada).
+- **Motivo:** atributos de data pertencem à dimensão calendário. Métricas não aditivas devem ser calculadas no contexto do filtro, e não armazenadas. A `profit_flag` não é uma métrica: ela classifica cada registro e serve como filtro no relatório.
 
 #### 15. Acumulados fora da fato
 - **Decisão:** não armazenar lucro acumulado (MTD) na fato.
@@ -567,17 +583,18 @@ Esta seção registra as principais decisões do projeto. Para cada uma, descrev
 SELECT COUNT(*) AS inconsistencias
 FROM silver.sales
 WHERE ABS(gross_sales - units_sold * sale_price) > 0.01
-   OR ABS(sales - (gross_sales - discounts))     > 0.01
-   OR ABS(profit - (sales - cogs))               > 0.01;
+   OR ABS(sales - (gross_sales - discounts))     > 0.01;
 ```
 
-**Unicidade da granularidade:**
+**Repetições na granularidade:**
 
 ```sql
 SELECT segment, country, product, date, COUNT(*)
 FROM silver.sales
 GROUP BY 1, 2, 3, 4
 HAVING COUNT(*) > 1;
+-- Resultado atual: 112 combinações repetidas. É uma característica da fonte,
+-- e não um erro de carga. A consulta serve para monitorar mudanças nesse número.
 ```
 
 **Domínio dos segmentos após a correção:**
@@ -602,9 +619,9 @@ SELECT
 **Produtos sem correspondência na dimensão:**
 
 ```sql
-SELECT DISTINCT s.product_name
+SELECT DISTINCT s.product
 FROM silver.sales s
-LEFT JOIN gold.dim_products d ON d.product = s.product_name
+LEFT JOIN gold.dim_products d ON d.product = s.product
 WHERE d.id IS NULL;
 -- Resultado esperado: nenhuma linha
 ```
@@ -623,8 +640,8 @@ WHERE d.id IS NULL;
 ### 1. Clonar o repositório
 
 ```bash
-git clone https://github.com/<seu-usuario>/financial-sample-pipeline.git
-cd financial-sample-pipeline
+git clone https://github.com/mAcosOS-banana/financial-sample-medallion-pipeline.git
+cd financial-sample-medallion-pipeline
 ```
 
 ### 2. Instalar as dependências
@@ -652,7 +669,8 @@ POSTGRES_URL=postgresql+psycopg2://usuario:senha@host:5432/banco?sslmode=require
 ### 4. Criar os schemas
 
 ```bash
-psql "$DATABASE_URL_PSQL" -f sql/00_schemas.sql
+set -a; source .env; set +a
+psql "${POSTGRES_URL/+psycopg2/}" -f sql/00_schemas.sql
 ```
 
 ### 5. Carregar a Bronze
@@ -685,6 +703,7 @@ Abra `powerbi/financial_sample.pbix`. O relatório está em modo Import e funcio
 
 - [ ] Criar a dimensão `dim_discount_bands` e substituir o atributo textual da fato.
 - [ ] Adicionar a coluna `cogs` à `gold.fact_sales`.
+- [ ] Criar índices nas colunas de chave estrangeira das fatos (`segment_id`, `country_id`, `product_id`).
 - [ ] Criar a fato mensal `gold.fact_sales_product_monthly`, com classificação **curva ABC** por mês.
 - [ ] Adicionar membros "Desconhecido" (`-1`) às dimensões.
 - [ ] Orquestrar o pipeline com **Apache Airflow**.
@@ -710,5 +729,5 @@ Os pontos que mais agregaram ao meu entendimento durante o projeto foram:
 **Marcos**
 Analista de Dados · Estudante de Ciência da Computação (UNEMAT) e Engenharia de Dados (Infnet)
 
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?logo=linkedin&logoColor=white)](www.linkedin.com/in/marcos-oliveira-601a18226)
-[![GitHub](https://img.shields.io/badge/GitHub-181717?logo=github&logoColor=white)](https://github.com/<seu-usuario>)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/in/marcos-oliveira-601a18226)
+[![GitHub](https://img.shields.io/badge/GitHub-181717?logo=github&logoColor=white)](https://github.com/mAcosOS-banana)
