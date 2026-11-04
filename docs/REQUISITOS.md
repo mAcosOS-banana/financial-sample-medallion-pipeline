@@ -1,6 +1,6 @@
 # Requisitos do Projeto: Relatório Mensal de Vendas
 
-Fonte: [Data_Analyst_Pratical_Case.pdf](src/Data_Analyst_Pratical_Case.pdf) (1 página, marcada como "Ilustrativo").
+Fonte: [Data_Analyst_Pratical_Case.pdf](Data_Analyst_Pratical_Case.pdf) (1 página, marcada como "Ilustrativo").
 
 ## Contexto
 

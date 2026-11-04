@@ -2,20 +2,23 @@ from sqlalchemy import Engine, create_engine
 from dotenv import load_dotenv
 import os
 import polars as pl
-from vaga_eng_dados.utils.utils import normalizar_nome
+from pathlib import Path
+from utils import normalizar_nome
 load_dotenv()
 
-engine : Engine = create_engine(os.getenv('POSTGRES_URL'))  
+engine : Engine = create_engine(os.getenv('POSTGRES_URL'))
+
+RAW_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
 
 
 if __name__ == "__main__":
    manufacturing_data = [
-      r"C:\Users\mvgam\OneDrive\Documentos\Vaga Eng dados\src\vaga_eng_dados\files\Base_de_dados_2013_2014_-_Manufacturing.xlsx",
-      r"C:\Users\mvgam\OneDrive\Documentos\Vaga Eng dados\src\vaga_eng_dados\files\Base_de_dados_2015_2016_-_Manufacturing.xlsx"
+      RAW_DIR / "Base_de_dados_2013_2014_-_Manufacturing.xlsx",
+      RAW_DIR / "Base_de_dados_2015_2016_-_Manufacturing.xlsx",
    ]
    sales_data = [
-      r"C:\Users\mvgam\OneDrive\Documentos\Vaga Eng dados\src\vaga_eng_dados\files\Base_de_dados_2013_2014_-_Sales.xlsx",
-      r"C:\Users\mvgam\OneDrive\Documentos\Vaga Eng dados\src\vaga_eng_dados\files\Base_de_dados_2015_2016_-_Sales.xlsx",
+      RAW_DIR / "Base_de_dados_2013_2014_-_Sales.xlsx",
+      RAW_DIR / "Base_de_dados_2015_2016_-_Sales.xlsx",
    ]
 
    for d in sales_data:

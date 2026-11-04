@@ -1,6 +1,6 @@
 # 📊 Financial Sample — Pipeline Medalhão com Polars, PostgreSQL e Power BI
 
-![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![Polars](https://img.shields.io/badge/Polars-DataFrame-CD792C?logo=polars&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Render-4169E1?logo=postgresql&logoColor=white)
 ![Power BI](https://img.shields.io/badge/Power%20BI-DAX-F2C811?logo=powerbi&logoColor=black)
@@ -113,6 +113,7 @@ financial-sample-pipeline/
 │   └── load_bronze.py          # Leitura com Polars e carga na Bronze
 ├── sql/
 │   ├── 00_schemas.sql          # Criação dos schemas
+│   ├── 00_bronze/              # Tabelas das camadas Raw e Bronze
 │   ├── 01_silver/              # Tabelas da camada Silver
 │   ├── 02_gold/                # Dimensões, fatos e tabelas agregadas
 │   └── 99_quality_checks.sql   # Validações de qualidade
@@ -156,7 +157,7 @@ df = (
 
 df.write_database(
     table_name="bronze.sales",
-    connection=DATABASE_URL,
+    connection=POSTGRES_URL,
     engine="sqlalchemy",
     if_table_exists="replace",
 )
@@ -614,7 +615,7 @@ WHERE d.id IS NULL;
 
 ### Pré-requisitos
 
-- Python 3.12+
+- Python 3.13+
 - [uv](https://docs.astral.sh/uv/)
 - Uma instância PostgreSQL (utilizei o [Render](https://render.com))
 - Power BI Desktop (para abrir o relatório)
@@ -632,7 +633,7 @@ cd financial-sample-pipeline
 uv sync
 ```
 
-Dependências principais: `polars`, `sqlalchemy`, `psycopg2-binary`, `pandas`, `pyarrow`.
+Dependências principais: `polars`, `fastexcel`, `python-calamine`, `sqlalchemy`, `psycopg2`, `pandas`, `pyarrow`, `python-dotenv`.
 
 ### 3. Configurar as variáveis de ambiente
 
@@ -643,7 +644,7 @@ cp .env.example .env
 ```
 
 ```env
-DATABASE_URL=postgresql+psycopg2://usuario:senha@host:5432/banco?sslmode=require
+POSTGRES_URL=postgresql+psycopg2://usuario:senha@host:5432/banco?sslmode=require
 ```
 
 > ⚠️ O arquivo `.env` está no `.gitignore`. Nunca versione credenciais.
@@ -662,7 +663,7 @@ uv run ingestion/load_bronze.py
 
 ### 6. Executar as transformações
 
-Execute os scripts SQL na ordem: `01_silver/` → `02_gold/` → `99_quality_checks.sql`.
+Execute os scripts SQL na ordem: `00_bronze/` → `01_silver/` → `02_gold/` → `99_quality_checks.sql`. Dentro de cada pasta, siga a numeração dos arquivos (as tabelas referenciadas por chave estrangeira vêm primeiro).
 
 ### 7. Abrir o relatório
 
@@ -709,5 +710,5 @@ Os pontos que mais agregaram ao meu entendimento durante o projeto foram:
 **Marcos**
 Analista de Dados · Estudante de Ciência da Computação (UNEMAT) e Engenharia de Dados (Infnet)
 
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/in/<seu-usuario>)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?logo=linkedin&logoColor=white)](www.linkedin.com/in/marcos-oliveira-601a18226)
 [![GitHub](https://img.shields.io/badge/GitHub-181717?logo=github&logoColor=white)](https://github.com/<seu-usuario>)

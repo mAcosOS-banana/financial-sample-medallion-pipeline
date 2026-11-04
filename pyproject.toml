@@ -1,7 +1,7 @@
 [project]
 name = "vaga-eng-dados"
 version = "0.1.0"
-description = "Add your description here"
+description = "Pipeline em arquitetura medalhão (Raw → Bronze → Silver → Gold) com Polars, PostgreSQL e Power BI."
 readme = "README.md"
 authors = [
     { name = "mAcosOS-banana", email = "marcosoliveira13hd@gmail.com" }
@@ -18,9 +18,5 @@ dependencies = [
     "sqlalchemy>=2.1.6",
 ]
 
-[project.scripts]
-vaga-eng-dados = "vaga_eng_dados:main"
-
-[build-system]
-requires = ["uv_build>=0.12.19,<0.13.0"]
-build-backend = "uv_build"
+[tool.uv]
+package = false
