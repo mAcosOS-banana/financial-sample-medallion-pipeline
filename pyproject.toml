@@ -1,0 +1,26 @@
+[project]
+name = "vaga-eng-dados"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "mAcosOS-banana", email = "marcosoliveira13hd@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "fastexcel>=0.21.0",
+    "pandas>=3.1.0",
+    "polars>=2.1.0",
+    "psycopg2>=2.9.13",
+    "pyarrow>=26.0.0",
+    "python-calamine>=0.9.0",
+    "python-dotenv>=1.2.4",
+    "sqlalchemy>=2.1.6",
+]
+
+[project.scripts]
+vaga-eng-dados = "vaga_eng_dados:main"
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
