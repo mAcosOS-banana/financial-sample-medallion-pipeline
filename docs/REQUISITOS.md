@@ -48,4 +48,4 @@ O PDF não define:
 - o formato da entrega (dashboard, relatório ou apresentação) nem as ferramentas a usar;
 - as métricas de performance (por exemplo, receita, volume ou margem);
 - o que significa "setor" nos dados;
-- o papel das bases de `Manufacturing` em `src/vaga_eng_dados/files/`, já que as demandas tratam apenas de vendas.
+- o papel das bases de `Manufacturing` em `data/raw/`, já que as demandas tratam apenas de vendas.

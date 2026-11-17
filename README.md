@@ -15,20 +15,21 @@
 ## 📑 Sumário
 
 1. [Sobre o projeto](#-sobre-o-projeto)
-2. [Arquitetura](#-arquitetura)
-3. [Stack tecnológica](#-stack-tecnológica)
-4. [O dataset e suas particularidades](#-o-dataset-e-suas-particularidades)
-5. [Estrutura do repositório](#-estrutura-do-repositório)
-6. [Camadas do pipeline](#-camadas-do-pipeline)
-7. [Modelo dimensional](#-modelo-dimensional)
-8. [Camada de consumo — Power BI](#-camada-de-consumo--power-bi)
-9. [Decisões técnicas](#-decisões-técnicas)
-10. [Validações de qualidade](#-validações-de-qualidade)
-11. [Como executar](#-como-executar)
-12. [Limitações conhecidas](#-limitações-conhecidas)
-13. [Próximos passos](#-próximos-passos)
-14. [Aprendizados](#-aprendizados)
-15. [Autor](#-autor)
+2. [Status de implementação](#-status-de-implementação)
+3. [Arquitetura](#-arquitetura)
+4. [Stack tecnológica](#-stack-tecnológica)
+5. [O dataset e suas particularidades](#-o-dataset-e-suas-particularidades)
+6. [Estrutura do repositório](#-estrutura-do-repositório)
+7. [Camadas do pipeline](#-camadas-do-pipeline)
+8. [Modelo dimensional](#-modelo-dimensional)
+9. [Camada de consumo — Power BI](#-camada-de-consumo--power-bi)
+10. [Decisões técnicas](#-decisões-técnicas)
+11. [Validações de qualidade](#-validações-de-qualidade)
+12. [Como executar](#-como-executar)
+13. [Limitações conhecidas](#-limitações-conhecidas)
+14. [Próximos passos](#-próximos-passos)
+15. [Aprendizados](#-aprendizados)
+16. [Autor](#-autor)
 
 ---
 
@@ -46,22 +47,45 @@ Mais do que o resultado visual, o foco do projeto está nas **decisões técnica
 
 ---
 
+## 🚦 Status de implementação
+
+O projeto está em evolução. Hoje, o repositório contém a ingestão das planilhas de vendas e a estrutura (DDL) das tabelas de todas as camadas. As transformações entre as camadas estão descritas neste README, mas os scripts de carga ainda não estão versionados.
+
+| Etapa | Situação | Onde |
+|---|---|---|
+| Criação dos schemas `raw`, `bronze`, `silver` e `gold` | ✅ Implementado | `sql/00_schemas.sql` |
+| Estrutura das tabelas (DDL) de todas as camadas | ✅ Implementado | `sql/00_bronze/`, `sql/01_silver/`, `sql/02_gold/` |
+| Ingestão das planilhas de vendas em `raw.sales_raw` | ✅ Implementado | `ingestion/load_bronze.py` |
+| Ingestão das planilhas de manufatura em `raw.manufacturing_raw` | ⏳ Pendente | `ingestion/load_bronze.py` lista os arquivos, mas não os carrega |
+| Carga Raw → Bronze | ⏳ Não versionado | — |
+| Transformações da Silver (limpeza, correção de segmentos, colunas derivadas) | ⏳ Não versionado | — |
+| Carga da Gold (dimensões, fatos e `resume_products`) | ⏳ Não versionado | — |
+| Validações de qualidade | ✅ Consultas prontas, mas dependem das cargas acima | `sql/99_quality_checks.sql` |
+| Relatório Power BI | ✅ Versionado | `powerbi/financial_sample.pbix` |
+
+> Os trechos de SQL das seções [Silver](#silver--dado-limpo-tipado-e-confiável) e [Gold](#gold--dado-de-negócio) mostram a lógica das transformações. Eles ainda não estão em arquivos do repositório.
+
+---
+
 ## 🏗 Arquitetura
 
 ```mermaid
 flowchart LR
-    A[Financial Sample<br/>CSV / XLSX] --> B[Raw<br/>arquivo original]
-    B -->|Polars| C[(Bronze<br/>tipos da fonte, sem tratamento)]
+    A[Planilhas XLSX<br/>Sales e Manufacturing] -->|Polars| B[(Raw<br/>cópia das planilhas)]
+    B -->|SQL| C[(Bronze<br/>tipos da fonte, sem tratamento)]
     C -->|SQL| D[(Silver<br/>limpo e tipado)]
     D -->|SQL| E[(Gold<br/>esquema estrela)]
     E -->|Import| F[Power BI<br/>DAX]
 
     subgraph Render [PostgreSQL gerenciado — Render]
+        B
         C
         D
         E
     end
 ```
+
+> No repositório, apenas a etapa **Planilhas → Raw** (vendas) está automatizada. Veja o [Status de implementação](#-status-de-implementação).
 
 **Princípios que segui:**
 
@@ -77,7 +101,7 @@ flowchart LR
 | Componente | Tecnologia | Papel no projeto |
 |---|---|---|
 | Linguagem | Python | Ingestão e orquestração das cargas |
-| Processamento | Polars | Leitura, padronização de colunas e gravação na Bronze |
+| Processamento | Polars | Leitura, padronização de colunas e gravação na Raw |
 | Banco de dados | PostgreSQL | Armazenamento das camadas e transformações em SQL |
 | Hospedagem | Render | PostgreSQL gerenciado em nuvem, com acesso via SSL |
 | Conexão Python ↔ banco | SQLAlchemy + psycopg2 | Engine de escrita do `write_database` |
@@ -89,6 +113,8 @@ flowchart LR
 ## 📦 O dataset e suas particularidades
 
 Utilizei o **Financial Sample**, um dataset **sintético** de vendas de uma empresa de manufatura, disponibilizado pela Microsoft.
+
+Os dados chegaram em **quatro planilhas** (`data/raw/`): vendas (`Sales`) e manufatura (`Manufacturing`), cada uma dividida em dois períodos (2013–2014 e 2015–2016).
 
 Antes de qualquer transformação, analisei a estrutura dos dados. Encontrei características que influenciaram diretamente a modelagem:
 
@@ -109,45 +135,46 @@ Antes de qualquer transformação, analisei a estrutura dos dados. Encontrei car
 ```
 financial-sample-medallion-pipeline/
 ├── data/
-│   └── raw/                    # Arquivo original (Financial Sample)
+│   └── raw/                               # 4 planilhas originais (Sales e Manufacturing, 2013–2014 e 2015–2016)
 ├── ingestion/
-│   └── load_bronze.py          # Leitura com Polars e carga na Bronze
+│   ├── load_bronze.py                     # Leitura com Polars e carga das vendas em raw.sales_raw
+│   └── utils.py                           # normalizar_nome: padronização dos nomes de colunas
 ├── sql/
-│   ├── 00_schemas.sql          # Criação dos schemas
-│   ├── 00_bronze/              # Tabelas das camadas Raw e Bronze
-│   ├── 01_silver/              # Tabelas da camada Silver
-│   ├── 02_gold/                # Dimensões, fatos e tabelas agregadas
-│   └── 99_quality_checks.sql   # Validações de qualidade
+│   ├── 00_schemas.sql                     # Criação dos schemas raw, bronze, silver e gold
+│   ├── 00_bronze/                         # DDL das tabelas Raw e Bronze (sales e manufacturing)
+│   ├── 01_silver/                         # DDL de products, countrys, sales e manufacturing
+│   ├── 02_gold/                           # DDL das dimensões, das fatos e da tabela agregada
+│   └── 99_quality_checks.sql              # Validações de qualidade
 ├── powerbi/
-│   └── financial_sample.pbix   # Relatório (modo Import)
+│   └── financial_sample.pbix              # Relatório (modo Import)
 ├── docs/
-│   └── images/                 # Prints do modelo e do relatório
-├── .env.example                # Variáveis de ambiente (sem credenciais)
+│   ├── Data_Analyst_Pratical_Case.pdf     # Enunciado do case
+│   ├── REQUISITOS.md                      # Requisitos derivados do case
+│   └── images/                            # Prints do modelo e do relatório (a adicionar)
+├── .env.example                           # Variáveis de ambiente (sem credenciais)
+├── .python-version
 ├── pyproject.toml
+├── uv.lock
 ├── README.md
 └── README.en.md
 ```
+
+> Os arquivos em `sql/00_bronze/`, `sql/01_silver/` e `sql/02_gold/` criam **apenas a estrutura** das tabelas (`CREATE TABLE IF NOT EXISTS`). Eles não carregam dados.
 
 ---
 
 ## 🥉🥈🥇 Camadas do pipeline
 
-### Raw
+### Raw — cópia das planilhas no banco
 
-Armazena o arquivo **exatamente como foi recebido**. Esta camada não é consultada para análise. Ela funciona como cópia de segurança e permite reprocessar todo o pipeline do zero.
+**Objetivo:** levar o conteúdo das planilhas para o banco sem alterar valores. Esta camada não é consultada para análise. Ela funciona como cópia de segurança e permite reprocessar todo o pipeline do zero. Os arquivos originais ficam em `data/raw/` e nunca são modificados.
 
----
+**O que o `ingestion/load_bronze.py` faz hoje:**
 
-### Bronze — dado bruto, padronizado
-
-**Objetivo:** guardar o conteúdo da fonte em formato padronizado e consultável, sem alterar valores.
-
-**O que faço nesta camada:**
-
-1. **Leio as planilhas Excel** (`.xlsx`) com o Polars e o engine `calamine`.
-2. **Padronizo os nomes das colunas** para `snake_case` (`Gross Sales` → `gross_sales`) com a função `normalizar_nome`, que também remove acentos e conectores.
-3. **Separo a coluna combinada** `country,product` em `country` e `product`.
-4. **Gravo a tabela em um schema específico**, acrescentando os arquivos de cada período.
+1. **Lê as planilhas de vendas** (`.xlsx`) com o Polars e o engine `calamine`.
+2. **Padroniza os nomes das colunas** para `snake_case` (`Gross Sales` → `gross_sales`) com a função `normalizar_nome` (`ingestion/utils.py`), que também remove acentos e conectores.
+3. **Separa a coluna combinada** `country,product` em `country` e `product`.
+4. **Grava a tabela `raw.sales_raw`**, acrescentando (`append`) os arquivos de cada período.
 
 ```python
 import polars as pl
@@ -176,11 +203,27 @@ for arquivo in sales_data:
     )
 ```
 
-O schema é criado previamente, pois o Polars cria a tabela, mas não cria o schema:
+Os schemas são criados previamente (`sql/00_schemas.sql`), pois o Polars cria a tabela, mas não cria o schema:
 
 ```sql
+CREATE SCHEMA IF NOT EXISTS raw;
 CREATE SCHEMA IF NOT EXISTS bronze;
+CREATE SCHEMA IF NOT EXISTS silver;
+CREATE SCHEMA IF NOT EXISTS gold;
 ```
+
+> **Pendências conhecidas no script:**
+> - As planilhas de manufatura estão listadas em `manufacturing_data`, mas ainda não são carregadas. A tabela `raw.manufacturing_raw` é criada pelo DDL e fica vazia.
+> - No código real, a separação de `country,product` está dentro de um `try/except` que apenas imprime `"ok"`. Um erro nessa etapa é silenciado.
+> - Como a gravação usa `append`, executar o script duas vezes duplica as linhas.
+
+---
+
+### Bronze — dado bruto, padronizado
+
+**Objetivo:** guardar o conteúdo da fonte em formato padronizado e consultável, sem alterar valores.
+
+**Situação:** as tabelas `bronze.sales` e `bronze.manufacturing` estão definidas em `sql/00_bronze/`, com as mesmas colunas e tipos da Raw. O script que copia os dados da Raw para a Bronze ainda não está versionado.
 
 **O que não faço nesta camada:** corrigir, remover, deduplicar ou recalcular qualquer valor.
 
@@ -189,6 +232,8 @@ CREATE SCHEMA IF NOT EXISTS bronze;
 ### Silver — dado limpo, tipado e confiável
 
 **Objetivo:** entregar dados corretos e consistentes, na granularidade original, sem regras de negócio complexas.
+
+**Situação:** a estrutura das tabelas está em `sql/01_silver/`. As regras abaixo descrevem a lógica de transformação. O script de carga ainda não está versionado.
 
 #### `silver.sales`
 
@@ -236,16 +281,19 @@ A conversão dos valores monetários para `NUMERIC(38,4)` acontece na carga da G
 #### Tabelas auxiliares
 
 - **`silver.products`:** cadastro de produtos (`product` como chave primária).
-- **`silver.manufacturing`:** custo de fabricação (`manufacturing_price`) e `cogs` por produto.
+- **`silver.countrys`:** cadastro de países (`country` como chave primária).
+- **`silver.manufacturing`:** custo de fabricação (`manufacturing_price`) e `cogs`, na granularidade segmento × país × produto × mês.
 
-A integridade dentro da camada é garantida por chave estrangeira:
+A integridade dentro da camada é garantida por chaves estrangeiras. `silver.sales` e `silver.manufacturing` referenciam `silver.products` e `silver.countrys`. Em `silver.sales`, `product` também é `NOT NULL`:
 
 ```sql
-ALTER TABLE silver.sales
-    ALTER COLUMN product SET NOT NULL,
-    ADD CONSTRAINT fk_sales_products
-        FOREIGN KEY (product)
-        REFERENCES silver.products (product);
+CREATE TABLE IF NOT EXISTS silver.sales (
+    -- ...
+    product  TEXT NOT NULL,
+    -- ...
+    CONSTRAINT fk_sales_products FOREIGN KEY (product) REFERENCES silver.products (product),
+    CONSTRAINT fk_sales_contry   FOREIGN KEY (country) REFERENCES silver.countrys (country)
+);
 ```
 
 ---
@@ -253,6 +301,8 @@ ALTER TABLE silver.sales
 ### Gold — dado de negócio
 
 **Objetivo:** organizar os dados em **esquema estrela**, prontos para consumo analítico.
+
+**Situação:** a estrutura das tabelas está em `sql/02_gold/`. Os `INSERT` mostrados abaixo descrevem a carga, que ainda não está versionada.
 
 #### Dimensões
 
@@ -281,20 +331,28 @@ ON CONFLICT (product) DO NOTHING;
 ```sql
 INSERT INTO gold.fact_sales (
     segment_id, country_id, product_id, discount_band, date,
-    units_sold, sale_price, gross_sales, discounts, sales, profit
+    units_sold, sale_price, gross_sales, discounts, sales, profit, profit_flag
 )
 SELECT
     ds.id, dc.id, dp.id, s.discount_band, s.date,
-    s.units_sold, s.sale_price, s.gross_sales, s.discounts, s.sales, s.profit
+    s.units_sold, s.sale_price, s.gross_sales, s.discounts, s.sales, s.profit, s.profit_flag
 FROM silver.sales s
 JOIN gold.dim_segments ds ON ds.segment = s.segment
 JOIN gold.dim_countrys dc ON dc.country = s.country
 JOIN gold.dim_products dp ON dp.product = s.product;
 ```
 
+#### Fato `gold.fact_manufacturing`
+
+**Granularidade:** uma linha por registro de `silver.manufacturing` (segmento × país × produto × mês).
+
+- `segment`, `country` e `product` são substituídos pelos `id` das dimensões, com chaves estrangeiras `NOT NULL`.
+- Métricas de custo: `manufacturing_price` e `cogs`, em `NUMERIC(38,2)`.
+- Diferente da `fact_sales`, ainda mantém `month_number` e `year`.
+
 #### Fato agregada `gold.resume_products`
 
-**Granularidade:** uma linha por produto. Consolida métricas de venda (`silver.sales`) e de custo (`silver.manufacturing`).
+**Granularidade:** uma linha por produto. Consolida métricas de venda (`silver.sales`) e de custo (`silver.manufacturing`): `total_units_sold`, `total_gross_sales`, `total_discounts`, `total_sales`, `total_profit`, `total_cogs`, `max_manufacturing_price`, `min_manufacturing_price`, `gross_profit` e `gross_margin`.
 
 As duas fontes são **agregadas separadamente** e unidas com `FULL JOIN`:
 
@@ -323,6 +381,9 @@ erDiagram
     dim_countrys  ||--o{ fact_sales : "country_id"
     dim_segments  ||--o{ fact_sales : "segment_id"
     dim_calendar  ||--o{ fact_sales : "date"
+    dim_products  ||--o{ fact_manufacturing : "product_id"
+    dim_countrys  ||--o{ fact_manufacturing : "country_id"
+    dim_segments  ||--o{ fact_manufacturing : "segment_id"
     dim_products  ||--|| resume_products : "product_id"
 
     fact_sales {
@@ -339,6 +400,17 @@ erDiagram
         numeric sales
         numeric profit
         text profit_flag
+    }
+    fact_manufacturing {
+        uuid id PK
+        uuid product_id FK
+        uuid country_id FK
+        uuid segment_id FK
+        date date
+        numeric manufacturing_price
+        numeric cogs
+        int month_number
+        int year
     }
     dim_products {
         uuid id PK
@@ -360,7 +432,9 @@ erDiagram
     }
     resume_products {
         uuid product_id FK
+        numeric total_units_sold
         numeric total_sales
+        numeric total_profit
         numeric total_cogs
         numeric gross_profit
         numeric gross_margin
@@ -454,20 +528,20 @@ CALCULATE ( [total_sales], DATEADD ( dim_calendar[Date], -NMonths, MONTH ) )
 
 Esta seção registra as principais decisões do projeto. Para cada uma, descrevo o contexto, a escolha e o motivo.
 
-### Ingestão e Bronze
+### Ingestão, Raw e Bronze
 
 #### 1. Polars para a ingestão
 - **Decisão:** usar Polars em vez de pandas.
 - **Motivo:** API expressiva, bom desempenho e gravação direta em schema qualificado com `write_database`.
 - **Trade-off:** com o engine `sqlalchemy`, o Polars usa o `pandas.to_sql` internamente. Para volumes maiores, o engine `adbc` é mais eficiente.
 
-#### 2. Tipos inferidos da planilha na Bronze
+#### 2. Tipos inferidos da planilha na Raw e na Bronze
 - **Decisão:** manter os tipos que o Polars infere das células do Excel (`double precision`, `bigint`, `date` e `text`), sem casts manuais.
-- **Motivo:** no `.xlsx`, as células já são tipadas. Datas e números chegam corretos à Bronze, sem conversão de texto. Os ajustes de tipo e de domínio ficam na Silver.
+- **Motivo:** no `.xlsx`, as células já são tipadas. Datas e números chegam corretos à Raw e à Bronze, sem conversão de texto. Os ajustes de tipo e de domínio ficam na Silver.
 - **Trade-off:** um valor inválido em uma coluna numérica pode virar nulo ou interromper a carga. Se o tipo de uma coluna mudar entre os arquivos, o `append` falha. Ler tudo como texto evitaria esses dois riscos, em troca de casts explícitos na Silver.
 
 #### 3. Um schema por camada
-- **Decisão:** `bronze`, `silver` e `gold` como schemas separados no mesmo banco.
+- **Decisão:** `raw`, `bronze`, `silver` e `gold` como schemas separados no mesmo banco.
 - **Motivo:** isolamento lógico, controle de permissões por camada e nomes autoexplicativos.
 
 ### Silver
@@ -577,6 +651,8 @@ Esta seção registra as principais decisões do projeto. Para cada uma, descrev
 
 ## ✅ Validações de qualidade
 
+As consultas abaixo estão em `sql/99_quality_checks.sql`. Elas consultam a Silver e a Gold e, por isso, só retornam resultados úteis depois que essas camadas forem carregadas. Os resultados citados nos comentários se referem à base completa.
+
 **Consistência das colunas monetárias:**
 
 ```sql
@@ -634,7 +710,8 @@ WHERE d.id IS NULL;
 
 - Python 3.13+
 - [uv](https://docs.astral.sh/uv/)
-- Uma instância PostgreSQL (utilizei o [Render](https://render.com))
+- Uma instância PostgreSQL 13+ (utilizei o [Render](https://render.com)). A versão 13 é a primeira com `gen_random_uuid()` nativo.
+- Cliente `psql`
 - Power BI Desktop (para abrir o relatório)
 
 ### 1. Clonar o repositório
@@ -666,24 +743,41 @@ POSTGRES_URL=postgresql+psycopg2://usuario:senha@host:5432/banco?sslmode=require
 
 > ⚠️ O arquivo `.env` está no `.gitignore`. Nunca versione credenciais.
 
-### 4. Criar os schemas
+### 4. Criar os schemas e as tabelas
+
+Execute `00_schemas.sql` e depois os scripts de DDL na ordem `00_bronze/` → `01_silver/` → `02_gold/`. Dentro de cada pasta, a numeração dos arquivos já coloca primeiro as tabelas referenciadas por chave estrangeira.
 
 ```bash
 set -a; source .env; set +a
-psql "${POSTGRES_URL/+psycopg2/}" -f sql/00_schemas.sql
+PG_URL="${POSTGRES_URL/+psycopg2/}"
+
+psql "$PG_URL" -v ON_ERROR_STOP=1 -f sql/00_schemas.sql
+for f in sql/00_bronze/*.sql sql/01_silver/*.sql sql/02_gold/*.sql; do
+    psql "$PG_URL" -v ON_ERROR_STOP=1 -f "$f"
+done
 ```
 
-### 5. Carregar a Bronze
+### 5. Carregar a Raw
 
 ```bash
 uv run ingestion/load_bronze.py
 ```
 
-### 6. Executar as transformações
+O script carrega as planilhas de **vendas** em `raw.sales_raw`. As planilhas de manufatura ainda não são carregadas. Como a gravação usa `append`, não execute o script duas vezes sobre a mesma tabela.
 
-Execute os scripts SQL na ordem: `00_bronze/` → `01_silver/` → `02_gold/` → `99_quality_checks.sql`. Dentro de cada pasta, siga a numeração dos arquivos (as tabelas referenciadas por chave estrangeira vêm primeiro).
+### 6. Transformações entre as camadas
 
-### 7. Abrir o relatório
+Os scripts de carga Raw → Bronze → Silver → Gold **ainda não estão no repositório**. A lógica de cada etapa está descrita em [Camadas do pipeline](#-camadas-do-pipeline).
+
+### 7. Validações de qualidade
+
+Depois das cargas, execute `sql/99_quality_checks.sql`:
+
+```bash
+psql "$PG_URL" -f sql/99_quality_checks.sql
+```
+
+### 8. Abrir o relatório
 
 Abra `powerbi/financial_sample.pbix`. O relatório está em modo Import e funciona sem conexão. Para atualizar os dados, ajuste os parâmetros `pServer` e `pDatabase` e informe as credenciais do seu banco.
 
@@ -691,6 +785,7 @@ Abra `powerbi/financial_sample.pbix`. O relatório está em modo Import e funcio
 
 ## ⚠️ Limitações conhecidas
 
+- **Pipeline parcialmente versionado.** O repositório cobre a ingestão das vendas e a estrutura das tabelas. As cargas das camadas Bronze, Silver e Gold ainda não estão versionadas.
 - **Dados sintéticos.** As diferenças de preço entre segmentos não refletem um cenário real.
 - **Ticket médio indisponível.** O dataset não possui identificador de pedido.
 - **Comparação anual parcial.** 2013 contém apenas quatro meses. A variação anual de 2014 contra 2013 compara 12 meses com 4. Para análises anuais, devem ser considerados apenas os meses presentes nos dois anos.
@@ -701,6 +796,10 @@ Abra `powerbi/financial_sample.pbix`. O relatório está em modo Import e funcio
 
 ## 🚀 Próximos passos
 
+- [ ] Carregar as planilhas de manufatura em `raw.manufacturing_raw`.
+- [ ] Remover o `try/except` silencioso da ingestão e tornar a carga idempotente.
+- [ ] Versionar os scripts de carga Raw → Bronze, Silver e Gold.
+- [ ] Adicionar os prints do modelo e do relatório em `docs/images/`.
 - [ ] Criar a dimensão `dim_discount_bands` e substituir o atributo textual da fato.
 - [ ] Adicionar a coluna `cogs` à `gold.fact_sales`.
 - [ ] Criar índices nas colunas de chave estrangeira das fatos (`segment_id`, `country_id`, `product_id`).
