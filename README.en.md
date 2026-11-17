@@ -15,20 +15,21 @@
 ## 📑 Table of contents
 
 1. [About the project](#-about-the-project)
-2. [Architecture](#-architecture)
-3. [Tech stack](#-tech-stack)
-4. [The dataset and its quirks](#-the-dataset-and-its-quirks)
-5. [Repository structure](#-repository-structure)
-6. [Pipeline layers](#-pipeline-layers)
-7. [Dimensional model](#-dimensional-model)
-8. [Consumption layer — Power BI](#-consumption-layer--power-bi)
-9. [Technical decisions](#-technical-decisions)
-10. [Quality checks](#-quality-checks)
-11. [How to run](#-how-to-run)
-12. [Known limitations](#-known-limitations)
-13. [Next steps](#-next-steps)
-14. [Lessons learned](#-lessons-learned)
-15. [Author](#-author)
+2. [Implementation status](#-implementation-status)
+3. [Architecture](#-architecture)
+4. [Tech stack](#-tech-stack)
+5. [The dataset and its quirks](#-the-dataset-and-its-quirks)
+6. [Repository structure](#-repository-structure)
+7. [Pipeline layers](#-pipeline-layers)
+8. [Dimensional model](#-dimensional-model)
+9. [Consumption layer — Power BI](#-consumption-layer--power-bi)
+10. [Technical decisions](#-technical-decisions)
+11. [Quality checks](#-quality-checks)
+12. [How to run](#-how-to-run)
+13. [Known limitations](#-known-limitations)
+14. [Next steps](#-next-steps)
+15. [Lessons learned](#-lessons-learned)
+16. [Author](#-author)
 
 ---
 
@@ -46,22 +47,45 @@ More than the visual result, the project focuses on **technical decisions** and 
 
 ---
 
+## 🚦 Implementation status
+
+The project is in progress. Today, the repository contains the ingestion of the sales spreadsheets and the table structure (DDL) for every layer. The transformations between layers are described in this README, but the load scripts are not versioned yet.
+
+| Step | Status | Where |
+|---|---|---|
+| Creation of the `raw`, `bronze`, `silver` and `gold` schemas | ✅ Implemented | `sql/00_schemas.sql` |
+| Table structure (DDL) for every layer | ✅ Implemented | `sql/00_bronze/`, `sql/01_silver/`, `sql/02_gold/` |
+| Ingestion of the sales spreadsheets into `raw.sales_raw` | ✅ Implemented | `ingestion/load_bronze.py` |
+| Ingestion of the manufacturing spreadsheets into `raw.manufacturing_raw` | ⏳ Pending | `ingestion/load_bronze.py` lists the files but does not load them |
+| Raw → Bronze load | ⏳ Not versioned | — |
+| Silver transformations (cleaning, segment fixes, derived columns) | ⏳ Not versioned | — |
+| Gold load (dimensions, facts and `resume_products`) | ⏳ Not versioned | — |
+| Quality checks | ✅ Queries ready, but they depend on the loads above | `sql/99_quality_checks.sql` |
+| Power BI report | ✅ Versioned | `powerbi/financial_sample.pbix` |
+
+> The SQL snippets in the [Silver](#silver--clean-typed-and-reliable-data) and [Gold](#gold--business-data) sections show the transformation logic. They are not in repository files yet.
+
+---
+
 ## 🏗 Architecture
 
 ```mermaid
 flowchart LR
-    A[Financial Sample<br/>CSV / XLSX] --> B[Raw<br/>original file]
-    B -->|Polars| C[(Bronze<br/>source types, untreated)]
+    A[XLSX spreadsheets<br/>Sales and Manufacturing] -->|Polars| B[(Raw<br/>copy of the spreadsheets)]
+    B -->|SQL| C[(Bronze<br/>source types, untreated)]
     C -->|SQL| D[(Silver<br/>clean and typed)]
     D -->|SQL| E[(Gold<br/>star schema)]
     E -->|Import| F[Power BI<br/>DAX]
 
     subgraph Render [Managed PostgreSQL — Render]
+        B
         C
         D
         E
     end
 ```
+
+> In the repository, only the **Spreadsheets → Raw** step (sales) is automated. See [Implementation status](#-implementation-status).
 
 **Principles I followed:**
 
@@ -77,7 +101,7 @@ flowchart LR
 | Component | Technology | Role in the project |
 |---|---|---|
 | Language | Python | Ingestion and load orchestration |
-| Processing | Polars | Reading, column standardization and writing to Bronze |
+| Processing | Polars | Reading, column standardization and writing to Raw |
 | Database | PostgreSQL | Layer storage and SQL transformations |
 | Hosting | Render | Managed cloud PostgreSQL, accessed over SSL |
 | Python ↔ database connection | SQLAlchemy + psycopg2 | Write engine for `write_database` |
@@ -89,6 +113,8 @@ flowchart LR
 ## 📦 The dataset and its quirks
 
 I used the **Financial Sample**, a **synthetic** sales dataset of a manufacturing company, published by Microsoft.
+
+The data came in **four spreadsheets** (`data/raw/`): sales (`Sales`) and manufacturing (`Manufacturing`), each split into two periods (2013–2014 and 2015–2016).
 
 Before any transformation, I analyzed the data structure. I found characteristics that directly shaped the modeling:
 
@@ -109,45 +135,46 @@ Before any transformation, I analyzed the data structure. I found characteristic
 ```
 financial-sample-medallion-pipeline/
 ├── data/
-│   └── raw/                    # Original files (Financial Sample)
+│   └── raw/                               # 4 original spreadsheets (Sales and Manufacturing, 2013–2014 and 2015–2016)
 ├── ingestion/
-│   └── load_bronze.py          # Reading with Polars and loading into Bronze
+│   ├── load_bronze.py                     # Reading with Polars and loading sales into raw.sales_raw
+│   └── utils.py                           # normalizar_nome: column name standardization
 ├── sql/
-│   ├── 00_schemas.sql          # Schema creation
-│   ├── 00_bronze/              # Raw and Bronze layer tables
-│   ├── 01_silver/              # Silver layer tables
-│   ├── 02_gold/                # Dimensions, facts and aggregate tables
-│   └── 99_quality_checks.sql   # Quality checks
+│   ├── 00_schemas.sql                     # Creation of the raw, bronze, silver and gold schemas
+│   ├── 00_bronze/                         # DDL for the Raw and Bronze tables (sales and manufacturing)
+│   ├── 01_silver/                         # DDL for products, countrys, sales and manufacturing
+│   ├── 02_gold/                           # DDL for the dimensions, facts and aggregate table
+│   └── 99_quality_checks.sql              # Quality checks
 ├── powerbi/
-│   └── financial_sample.pbix   # Report (Import mode)
+│   └── financial_sample.pbix              # Report (Import mode)
 ├── docs/
-│   └── images/                 # Screenshots of the model and the report
-├── .env.example                # Environment variables (no credentials)
+│   ├── Data_Analyst_Pratical_Case.pdf     # Case statement
+│   ├── REQUISITOS.md                      # Requirements derived from the case (Portuguese)
+│   └── images/                            # Screenshots of the model and the report (to be added)
+├── .env.example                           # Environment variables (no credentials)
+├── .python-version
 ├── pyproject.toml
+├── uv.lock
 ├── README.md
 └── README.en.md
 ```
+
+> The files in `sql/00_bronze/`, `sql/01_silver/` and `sql/02_gold/` create **only the structure** of the tables (`CREATE TABLE IF NOT EXISTS`). They do not load data.
 
 ---
 
 ## 🥉🥈🥇 Pipeline layers
 
-### Raw
+### Raw — copy of the spreadsheets in the database
 
-Stores the file **exactly as it was received**. This layer is not queried for analysis. It works as a backup and allows the whole pipeline to be reprocessed from scratch.
+**Goal:** bring the spreadsheet content into the database without changing values. This layer is not queried for analysis. It works as a backup and allows the whole pipeline to be reprocessed from scratch. The original files stay in `data/raw/` and are never modified.
 
----
+**What `ingestion/load_bronze.py` does today:**
 
-### Bronze — raw data, standardized
-
-**Goal:** keep the source content in a standardized, queryable format, without changing values.
-
-**What I do in this layer:**
-
-1. **Read the Excel spreadsheets** (`.xlsx`) with Polars and the `calamine` engine.
-2. **Standardize column names** to `snake_case` (`Gross Sales` → `gross_sales`) with the `normalizar_nome` function, which also removes accents and connector words.
-3. **Split the combined column** `country,product` into `country` and `product`.
-4. **Write the table to a dedicated schema**, appending the files for each period.
+1. **Reads the sales spreadsheets** (`.xlsx`) with Polars and the `calamine` engine.
+2. **Standardizes column names** to `snake_case` (`Gross Sales` → `gross_sales`) with the `normalizar_nome` function (`ingestion/utils.py`), which also removes accents and connector words.
+3. **Splits the combined column** `country,product` into `country` and `product`.
+4. **Writes the `raw.sales_raw` table**, appending the files for each period.
 
 ```python
 import polars as pl
@@ -176,11 +203,27 @@ for arquivo in sales_data:
     )
 ```
 
-The schema is created beforehand, because Polars creates the table but not the schema:
+The schemas are created beforehand (`sql/00_schemas.sql`), because Polars creates the table but not the schema:
 
 ```sql
+CREATE SCHEMA IF NOT EXISTS raw;
 CREATE SCHEMA IF NOT EXISTS bronze;
+CREATE SCHEMA IF NOT EXISTS silver;
+CREATE SCHEMA IF NOT EXISTS gold;
 ```
+
+> **Known gaps in the script:**
+> - The manufacturing spreadsheets are listed in `manufacturing_data`, but they are not loaded yet. The `raw.manufacturing_raw` table is created by the DDL and stays empty.
+> - In the actual code, the `country,product` split is inside a `try/except` that only prints `"ok"`. An error in this step is silenced.
+> - Because the write uses `append`, running the script twice duplicates the rows.
+
+---
+
+### Bronze — raw data, standardized
+
+**Goal:** keep the source content in a standardized, queryable format, without changing values.
+
+**Status:** the `bronze.sales` and `bronze.manufacturing` tables are defined in `sql/00_bronze/`, with the same columns and types as Raw. The script that copies data from Raw to Bronze is not versioned yet.
 
 **What I don't do in this layer:** fix, remove, deduplicate or recalculate any value.
 
@@ -189,6 +232,8 @@ CREATE SCHEMA IF NOT EXISTS bronze;
 ### Silver — clean, typed and reliable data
 
 **Goal:** deliver correct and consistent data, at the original grain, without complex business rules.
+
+**Status:** the table structure is in `sql/01_silver/`. The rules below describe the transformation logic. The load script is not versioned yet.
 
 #### `silver.sales`
 
@@ -236,16 +281,19 @@ Monetary values are converted to `NUMERIC(38,4)` when Gold is loaded (`gold.fact
 #### Auxiliary tables
 
 - **`silver.products`:** product register (`product` as primary key).
-- **`silver.manufacturing`:** manufacturing cost (`manufacturing_price`) and `cogs` per product.
+- **`silver.countrys`:** country register (`country` as primary key).
+- **`silver.manufacturing`:** manufacturing cost (`manufacturing_price`) and `cogs`, at the segment × country × product × month grain.
 
-Integrity within the layer is enforced by a foreign key:
+Integrity within the layer is enforced by foreign keys. `silver.sales` and `silver.manufacturing` reference `silver.products` and `silver.countrys`. In `silver.sales`, `product` is also `NOT NULL`:
 
 ```sql
-ALTER TABLE silver.sales
-    ALTER COLUMN product SET NOT NULL,
-    ADD CONSTRAINT fk_sales_products
-        FOREIGN KEY (product)
-        REFERENCES silver.products (product);
+CREATE TABLE IF NOT EXISTS silver.sales (
+    -- ...
+    product  TEXT NOT NULL,
+    -- ...
+    CONSTRAINT fk_sales_products FOREIGN KEY (product) REFERENCES silver.products (product),
+    CONSTRAINT fk_sales_contry   FOREIGN KEY (country) REFERENCES silver.countrys (country)
+);
 ```
 
 ---
@@ -253,6 +301,8 @@ ALTER TABLE silver.sales
 ### Gold — business data
 
 **Goal:** organize the data in a **star schema**, ready for analytical consumption.
+
+**Status:** the table structure is in `sql/02_gold/`. The `INSERT` statements below describe the load, which is not versioned yet.
 
 #### Dimensions
 
@@ -281,20 +331,28 @@ ON CONFLICT (product) DO NOTHING;
 ```sql
 INSERT INTO gold.fact_sales (
     segment_id, country_id, product_id, discount_band, date,
-    units_sold, sale_price, gross_sales, discounts, sales, profit
+    units_sold, sale_price, gross_sales, discounts, sales, profit, profit_flag
 )
 SELECT
     ds.id, dc.id, dp.id, s.discount_band, s.date,
-    s.units_sold, s.sale_price, s.gross_sales, s.discounts, s.sales, s.profit
+    s.units_sold, s.sale_price, s.gross_sales, s.discounts, s.sales, s.profit, s.profit_flag
 FROM silver.sales s
 JOIN gold.dim_segments ds ON ds.segment = s.segment
 JOIN gold.dim_countrys dc ON dc.country = s.country
 JOIN gold.dim_products dp ON dp.product = s.product;
 ```
 
+#### Fact `gold.fact_manufacturing`
+
+**Grain:** one row per `silver.manufacturing` record (segment × country × product × month).
+
+- `segment`, `country` and `product` are replaced by the dimension `id`s, with `NOT NULL` foreign keys.
+- Cost metrics: `manufacturing_price` and `cogs`, as `NUMERIC(38,2)`.
+- Unlike `fact_sales`, it still keeps `month_number` and `year`.
+
 #### Aggregate fact `gold.resume_products`
 
-**Grain:** one row per product. Combines sales metrics (`silver.sales`) and cost metrics (`silver.manufacturing`).
+**Grain:** one row per product. Combines sales metrics (`silver.sales`) and cost metrics (`silver.manufacturing`): `total_units_sold`, `total_gross_sales`, `total_discounts`, `total_sales`, `total_profit`, `total_cogs`, `max_manufacturing_price`, `min_manufacturing_price`, `gross_profit` and `gross_margin`.
 
 The two sources are **aggregated separately** and combined with a `FULL JOIN`:
 
@@ -323,6 +381,9 @@ erDiagram
     dim_countrys  ||--o{ fact_sales : "country_id"
     dim_segments  ||--o{ fact_sales : "segment_id"
     dim_calendar  ||--o{ fact_sales : "date"
+    dim_products  ||--o{ fact_manufacturing : "product_id"
+    dim_countrys  ||--o{ fact_manufacturing : "country_id"
+    dim_segments  ||--o{ fact_manufacturing : "segment_id"
     dim_products  ||--|| resume_products : "product_id"
 
     fact_sales {
@@ -339,6 +400,17 @@ erDiagram
         numeric sales
         numeric profit
         text profit_flag
+    }
+    fact_manufacturing {
+        uuid id PK
+        uuid product_id FK
+        uuid country_id FK
+        uuid segment_id FK
+        date date
+        numeric manufacturing_price
+        numeric cogs
+        int month_number
+        int year
     }
     dim_products {
         uuid id PK
@@ -360,7 +432,9 @@ erDiagram
     }
     resume_products {
         uuid product_id FK
+        numeric total_units_sold
         numeric total_sales
+        numeric total_profit
         numeric total_cogs
         numeric gross_profit
         numeric gross_margin
@@ -454,20 +528,20 @@ CALCULATE ( [total_sales], DATEADD ( dim_calendar[Date], -NMonths, MONTH ) )
 
 This section records the main decisions of the project. For each one, I describe the context, the choice and the reason.
 
-### Ingestion and Bronze
+### Ingestion, Raw and Bronze
 
 #### 1. Polars for ingestion
 - **Decision:** use Polars instead of pandas.
 - **Reason:** expressive API, good performance and direct writes to a qualified schema with `write_database`.
 - **Trade-off:** with the `sqlalchemy` engine, Polars uses `pandas.to_sql` internally. For larger volumes, the `adbc` engine is more efficient.
 
-#### 2. Types inferred from the spreadsheet in Bronze
+#### 2. Types inferred from the spreadsheet in Raw and Bronze
 - **Decision:** keep the types Polars infers from the Excel cells (`double precision`, `bigint`, `date` and `text`), without manual casts.
-- **Reason:** in an `.xlsx`, cells are already typed. Dates and numbers arrive in Bronze correctly, with no text conversion. Type and domain adjustments stay in Silver.
+- **Reason:** in an `.xlsx`, cells are already typed. Dates and numbers arrive in Raw and Bronze correctly, with no text conversion. Type and domain adjustments stay in Silver.
 - **Trade-off:** an invalid value in a numeric column may become null or break the load. If a column's type changes between files, the `append` fails. Reading everything as text would avoid both risks, at the cost of explicit casts in Silver.
 
 #### 3. One schema per layer
-- **Decision:** `bronze`, `silver` and `gold` as separate schemas in the same database.
+- **Decision:** `raw`, `bronze`, `silver` and `gold` as separate schemas in the same database.
 - **Reason:** logical isolation, per-layer permission control and self-explanatory names.
 
 ### Silver
@@ -577,6 +651,8 @@ This section records the main decisions of the project. For each one, I describe
 
 ## ✅ Quality checks
 
+The queries below are in `sql/99_quality_checks.sql`. They query Silver and Gold, so they only return useful results after those layers are loaded. The results mentioned in the comments refer to the full dataset.
+
 **Consistency of monetary columns:**
 
 ```sql
@@ -634,7 +710,8 @@ WHERE d.id IS NULL;
 
 - Python 3.13+
 - [uv](https://docs.astral.sh/uv/)
-- A PostgreSQL instance (I used [Render](https://render.com))
+- A PostgreSQL 13+ instance (I used [Render](https://render.com)). Version 13 is the first with native `gen_random_uuid()`.
+- The `psql` client
 - Power BI Desktop (to open the report)
 
 ### 1. Clone the repository
@@ -666,24 +743,41 @@ POSTGRES_URL=postgresql+psycopg2://user:password@host:5432/database?sslmode=requ
 
 > ⚠️ The `.env` file is in `.gitignore`. Never commit credentials.
 
-### 4. Create the schemas
+### 4. Create the schemas and tables
+
+Run `00_schemas.sql` and then the DDL scripts in the order `00_bronze/` → `01_silver/` → `02_gold/`. Within each folder, the file numbering already puts the tables referenced by foreign keys first.
 
 ```bash
 set -a; source .env; set +a
-psql "${POSTGRES_URL/+psycopg2/}" -f sql/00_schemas.sql
+PG_URL="${POSTGRES_URL/+psycopg2/}"
+
+psql "$PG_URL" -v ON_ERROR_STOP=1 -f sql/00_schemas.sql
+for f in sql/00_bronze/*.sql sql/01_silver/*.sql sql/02_gold/*.sql; do
+    psql "$PG_URL" -v ON_ERROR_STOP=1 -f "$f"
+done
 ```
 
-### 5. Load Bronze
+### 5. Load Raw
 
 ```bash
 uv run ingestion/load_bronze.py
 ```
 
-### 6. Run the transformations
+The script loads the **sales** spreadsheets into `raw.sales_raw`. The manufacturing spreadsheets are not loaded yet. Because the write uses `append`, do not run the script twice against the same table.
 
-Run the SQL scripts in this order: `00_bronze/` → `01_silver/` → `02_gold/` → `99_quality_checks.sql`. Within each folder, follow the file numbering (tables referenced by foreign keys come first).
+### 6. Transformations between layers
 
-### 7. Open the report
+The Raw → Bronze → Silver → Gold load scripts **are not in the repository yet**. The logic of each step is described in [Pipeline layers](#-pipeline-layers).
+
+### 7. Quality checks
+
+After the loads, run `sql/99_quality_checks.sql`:
+
+```bash
+psql "$PG_URL" -f sql/99_quality_checks.sql
+```
+
+### 8. Open the report
 
 Open `powerbi/financial_sample.pbix`. The report is in Import mode and works offline. To refresh the data, set the `pServer` and `pDatabase` parameters and enter your database credentials.
 
@@ -691,6 +785,7 @@ Open `powerbi/financial_sample.pbix`. The report is in Import mode and works off
 
 ## ⚠️ Known limitations
 
+- **Partially versioned pipeline.** The repository covers the sales ingestion and the table structure. The Bronze, Silver and Gold loads are not versioned yet.
 - **Synthetic data.** Price differences between segments do not reflect a real scenario.
 - **No average ticket.** The dataset has no order identifier.
 - **Partial yearly comparison.** 2013 contains only four months. The 2014 versus 2013 yearly change compares 12 months with 4. For yearly analyses, only the months present in both years should be considered.
@@ -701,6 +796,10 @@ Open `powerbi/financial_sample.pbix`. The report is in Import mode and works off
 
 ## 🚀 Next steps
 
+- [ ] Load the manufacturing spreadsheets into `raw.manufacturing_raw`.
+- [ ] Remove the silent `try/except` from the ingestion and make the load idempotent.
+- [ ] Version the Raw → Bronze, Silver and Gold load scripts.
+- [ ] Add screenshots of the model and the report to `docs/images/`.
 - [ ] Create the `dim_discount_bands` dimension and replace the text attribute in the fact table.
 - [ ] Add the `cogs` column to `gold.fact_sales`.
 - [ ] Create indexes on the fact tables' foreign key columns (`segment_id`, `country_id`, `product_id`).
